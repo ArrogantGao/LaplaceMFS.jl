@@ -15,11 +15,15 @@
    `N = 1059`). There is no sign, normalization, or kernel defect anywhere in the
    single-sphere path.
 
-2. **The multi-sphere path has never been verified against physics.** Every test in
-   `test/operators.jl` is a *self-consistency* check — FMM against dense, `Ghat`
-   against the same formula rebuilt inline. The `Ghat` + Krylov + FMM machinery that
-   is the actual product has never been compared to an independent answer. Closing
-   this is the point of the whole exercise.
+2. **The multi-sphere path now passes its first physics test — in the
+   well-separated regime only.** Every test in `test/operators.jl` had been a
+   *self-consistency* check (FMM against dense, `Ghat` against the same formula
+   rebuilt inline), and `Ghat` had never actually solved anything: it was only ever
+   applied to `randn` vectors. §3.5 closes that for two well-separated spheres —
+   the assembled operator converges to the exact single-sphere answer at the
+   theoretically correct `O(R⁻⁴)` rate, and `Ghat` + GMRES + FMM reproduces the
+   direct least-squares to 8e-14. The **near-touching and many-sphere regimes
+   remain untested**, and are what the rest of this plan exists to cover.
 
 3. **The near field converges, but only with the right `r_p`, and it is expensive.**
    At `d/a = 1.2` the method reaches **4.8e-07** with `N = 5001` and `r_p = 0.7`,
@@ -411,6 +415,41 @@ At `M = 614`, `r_p = 0.90` gives the **best** boundary residual and nearly the
   excitation, where all content sits at `n = 1`; under a nearby point charge the
   optimum shifts and the curve is non-monotonic.
 
+### 3.5 First multi-sphere physics test
+
+Two spheres (`a = 1`, `ε_r = 2.5`, `r_p = 0.5`, `M = 614`, `N = 513`), one exterior
+point charge at `d/a = 2` below sphere 1, with sphere 2 receding to `+R`. Targets sit
+near sphere 1. Three independent solve paths are compared, and the assembled operator
+is checked against the **exact single-sphere Legendre series**, which the two-sphere
+answer must approach as `R → ∞`.
+
+| `R/a` | dense vs. exact 1-sphere | `Ghat`+GMRES vs. dense | `Ghat_fmm` vs. dense | GMRES iters |
+|---|---|---|---|---|
+| 8 | 3.66e-03 | 8.97e-14 | 8.32e-14 | 4 |
+| 16 | 2.37e-04 | 7.24e-14 | 8.05e-14 | 3 |
+| 32 | 1.57e-05 | 7.30e-14 | 7.62e-14 | 3 |
+| 64 | 1.02e-06 | 7.97e-14 | 8.83e-14 | 3 |
+
+**The decay rate is the result.** Each doubling of `R` reduces the discrepancy by
+15.4× ≈ 2⁴, i.e. `O(R⁻⁴)` — exactly what theory requires. Sphere 2 sees a field
+`~q/R²`, acquires an induced dipole `~α a³ q/R²`, whose potential back at sphere 1
+scales as `q a³/R⁴`. The multi-sphere operator is therefore validated against physics,
+not merely against itself.
+
+Two further results:
+
+- **`Ghat` + GMRES reproduces the direct dense least-squares to ~8e-14**, and so does
+  `Ghat_fmm`. The second-kind reformulation, the SVD pseudo-inverse `μ → λ` mapping,
+  and the Krylov solve all agree with the direct solve to machine precision. This is
+  the first time any of them has solved a problem rather than been applied to a
+  random vector.
+- **GMRES converges in 3–4 iterations at every separation**, confirming the
+  second-kind formulation is as well-conditioned as intended.
+
+**Scope.** Two spheres, all at `R/a ≥ 8`. This says nothing about the near-touching
+regime where §3.3's cost law bites, nor about many-sphere FMM at scale. Those remain
+rungs 2–4 and still require `HybridSolve`.
+
 ---
 
 ## 4. High-level plan
@@ -452,7 +491,7 @@ Part A is gated by its own regression test against the analytic Legendre series 
 | **B0** | ~~Fix the `EffSphDes` artifact.~~ **Done.** |
 | **B1** | Add `multispheres_pointcharge_rhs` to `src/sphere.jl`, with tests. |
 | **B2** | Add `single_sphere_pointcharge_exterior` (the Legendre series) to `src/utils/single_sphere.jl` as a package utility. |
-| **B3** | **An end-to-end `Ghat` + GMRES test against a physical answer.** |
+| **B3** | **An end-to-end `Ghat` + GMRES test against a physical answer.** Demonstrated in §3.5 for two well-separated spheres; still to be promoted into `test/` and extended to the near-touching and many-sphere regimes. |
 | **B4** | A comparison harness: emit a `HybridSolve` config, run it, read targets back, run LaplaceMFS on the same geometry, report error against `N_proxy` and against gap. |
 
 **B3 is the deliverable.** B1, B2 and B4 are scaffolding for it. The
